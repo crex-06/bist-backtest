@@ -26,16 +26,18 @@ ATR_MULTIPLIER = 2.0
 
 START_DATE = "2019-01-01"
 
+# KOZAA ve KOZAL Yahoo Finance tarafında bulunamadığı için
+# geçici olarak veri evreninden çıkarıldı.
 SYMBOLS = [
     "AKBNK", "ALARK", "ARCLK", "ASELS", "ASTOR",
     "BIMAS", "BRSAN", "CCOLA", "DOAS", "DOHOL",
     "ECILC", "EKGYO", "ENKAI", "EREGL", "FENER",
     "FROTO", "GARAN", "GUBRF", "HALKB", "HEKTS",
-    "ISCTR", "KCHOL", "KONTR", "KOZAA", "KOZAL",
-    "KRDMD", "MGROS", "OYAKC", "PETKM", "PGSUS",
-    "SAHOL", "SASA", "SISE", "SKBNK", "TAVHL",
-    "TCELL", "THYAO", "TKFEN", "TOASO", "TUPRS",
-    "ULKER", "VAKBN", "YKBNK"
+    "ISCTR", "KCHOL", "KONTR", "KRDMD", "MGROS",
+    "OYAKC", "PETKM", "PGSUS", "SAHOL", "SASA",
+    "SISE", "SKBNK", "TAVHL", "TCELL", "THYAO",
+    "TKFEN", "TOASO", "TUPRS", "ULKER", "VAKBN",
+    "YKBNK"
 ]
 
 
@@ -78,6 +80,10 @@ def calculate_atr(df, period=14):
     return true_range.rolling(period).mean()
 
 
+# ============================================================
+# DATA PREPARATION
+# ============================================================
+
 def prepare_data(df):
 
     df = df.copy()
@@ -85,7 +91,7 @@ def prepare_data(df):
     if df.empty:
         return df
 
-    # Handle possible MultiIndex columns
+    # Yahoo bazen MultiIndex döndürebiliyor.
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
 
@@ -97,17 +103,30 @@ def prepare_data(df):
         "Volume"
     ]
 
+    # Eksik kolon varsa bu sembolü kullanma.
+    if not all(
+        column in df.columns
+        for column in required_columns
+    ):
+        return pd.DataFrame()
+
     df = df[required_columns].copy()
 
-    df["EMA20"] = df["Close"].ewm(
-        span=20,
-        adjust=False
-    ).mean()
+    # --------------------------------------------------------
+    # TECHNICAL INDICATORS
+    # --------------------------------------------------------
 
-    df["EMA50"] = df["Close"].ewm(
-        span=50,
-        adjust=False
-    ).mean()
+    df["EMA20"] = (
+        df["Close"]
+        .ewm(span=20, adjust=False)
+        .mean()
+    )
+
+    df["EMA50"] = (
+        df["Close"]
+        .ewm(span=50, adjust=False)
+        .mean()
+    )
 
     df["RSI14"] = calculate_rsi(
         df["Close"],
@@ -119,10 +138,12 @@ def prepare_data(df):
         14
     )
 
-    df["VOL_MA20"] = df["Volume"].rolling(20).mean()
+    df["VOL_MA20"] = (
+        df["Volume"]
+        .rolling(20)
+        .mean()
+    )
 
-    # Previous 20-day high.
-    # Shift(1) prevents look-ahead bias.
     df["PREV_20_HIGH"] = (
         df["High"]
         .rolling(20)
@@ -131,31 +152,32 @@ def prepare_data(df):
     )
 
     df["RETURN_20"] = (
-        df["Close"] /
-        df["Close"].shift(20) - 1
+        df["Close"]
+        / df["Close"].shift(20)
+        - 1
     )
 
-    # ========================================================
+    # --------------------------------------------------------
     # SIGNAL COMPONENTS
-    # ========================================================
+    # --------------------------------------------------------
 
     df["C1_TREND"] = (
         df["EMA20"] > df["EMA50"]
     )
 
     df["C2_RSI"] = (
-        (df["RSI14"] >= 50) &
-        (df["RSI14"] <= 72)
+        (df["RSI14"] >= 50)
+        & (df["RSI14"] <= 72)
     )
 
     df["C3_VOLUME"] = (
-        df["Volume"] >
-        1.2 * df["VOL_MA20"]
+        df["Volume"]
+        > 1.2 * df["VOL_MA20"]
     )
 
     df["C4_BREAKOUT"] = (
-        df["Close"] >
-        df["PREV_20_HIGH"]
+        df["Close"]
+        > df["PREV_20_HIGH"]
     )
 
     df["C5_MOMENTUM"] = (
@@ -163,11 +185,11 @@ def prepare_data(df):
     )
 
     df["SIGNAL_SCORE"] = (
-        df["C1_TREND"].astype(int) +
-        df["C2_RSI"].astype(int) +
-        df["C3_VOLUME"].astype(int) +
-        df["C4_BREAKOUT"].astype(int) +
-        df["C5_MOMENTUM"].astype(int)
+        df["C1_TREND"].astype(int)
+        + df["C2_RSI"].astype(int)
+        + df["C3_VOLUME"].astype(int)
+        + df["C4_BREAKOUT"].astype(int)
+        + df["C5_MOMENTUM"].astype(int)
     )
 
     df["SIGNAL"] = (
@@ -178,7 +200,7 @@ def prepare_data(df):
 
 
 # ============================================================
-# DATA DOWNLOAD
+# DOWNLOAD DATA
 # ============================================================
 
 def download_data():
@@ -205,15 +227,27 @@ def download_data():
             )
 
             if df is None or df.empty:
-                print(f"  No data: {symbol}")
+
+                print(
+                    f"  No data: {symbol}"
+                )
+
                 continue
 
             df = prepare_data(df)
 
             if not df.empty:
+
                 data[symbol] = df
+
                 print(
                     f"  OK: {len(df)} rows"
+                )
+
+            else:
+
+                print(
+                    f"  Invalid data: {symbol}"
                 )
 
         except Exception as e:
@@ -223,6 +257,7 @@ def download_data():
             )
 
     print()
+
     print(
         f"Downloaded {len(data)} / "
         f"{len(SYMBOLS)} symbols"
@@ -246,6 +281,7 @@ def run_backtest(data):
     )
 
     if not all_dates:
+
         raise RuntimeError(
             "No market data available."
         )
@@ -255,14 +291,19 @@ def run_backtest(data):
     positions = {}
 
     equity_records = []
+
     trades = []
 
     cumulative_realized_pnl = 0.0
 
+    # ========================================================
+    # DAILY LOOP
+    # ========================================================
+
     for date in all_dates:
 
         # ====================================================
-        # 1. EXIT EXISTING POSITIONS
+        # EXIT EXISTING POSITIONS
         # ====================================================
 
         symbols_to_close = []
@@ -282,23 +323,6 @@ def run_backtest(data):
                 row["Close"]
             )
 
-            previous_signal = False
-
-            try:
-
-                idx = df.index.get_loc(date)
-
-                if idx > 0:
-
-                    prev_row = df.iloc[idx - 1]
-
-                    previous_signal = bool(
-                        prev_row["SIGNAL"]
-                    )
-
-            except Exception:
-                pass
-
             entry_price = position[
                 "entry_price"
             ]
@@ -311,109 +335,138 @@ def run_backtest(data):
                 "stop_price"
             ]
 
-            # Stop-loss based on current day's
-            # close information.
+            # ------------------------------------------------
+            # SAFETY CHECK
+            # ------------------------------------------------
+
+            if not np.isfinite(close_price):
+                continue
+
+            if not np.isfinite(entry_price):
+                continue
+
+            if not np.isfinite(stop_price):
+                continue
+
+            # ------------------------------------------------
+            # EXIT CONDITIONS
+            # ------------------------------------------------
+
             stop_hit = (
                 close_price <= stop_price
             )
 
-            # Trend / momentum failure.
             trend_break = (
-                float(row["EMA20"]) <
-                float(row["EMA50"])
+                np.isfinite(row["EMA20"])
+                and np.isfinite(row["EMA50"])
+                and float(row["EMA20"])
+                < float(row["EMA50"])
             )
 
             momentum_failure = (
-                float(row["RSI14"]) < 45
+                np.isfinite(row["RSI14"])
+                and float(row["RSI14"]) < 45
             )
 
             exit_signal = (
-                stop_hit or
-                trend_break or
-                momentum_failure
+                stop_hit
+                or trend_break
+                or momentum_failure
             )
 
             if exit_signal:
 
                 exit_price = (
-                    close_price *
-                    (1 - SLIPPAGE)
+                    close_price
+                    * (1 - SLIPPAGE)
                 )
 
                 gross_value = (
-                    shares * exit_price
+                    shares
+                    * exit_price
                 )
 
                 commission = (
-                    gross_value *
-                    COMMISSION
+                    gross_value
+                    * COMMISSION
                 )
 
                 cash += (
-                    gross_value -
-                    commission
+                    gross_value
+                    - commission
                 )
 
                 gross_pnl = (
-                    exit_price -
-                    entry_price
+                    exit_price
+                    - entry_price
                 ) * shares
 
                 entry_cost = (
-                    entry_price *
-                    shares
+                    entry_price
+                    * shares
                 )
 
                 entry_commission = (
-                    entry_cost *
-                    COMMISSION
+                    entry_cost
+                    * COMMISSION
                 )
 
                 net_pnl = (
-                    gross_pnl -
-                    commission -
-                    entry_commission
+                    gross_pnl
+                    - commission
+                    - entry_commission
                 )
 
                 cumulative_realized_pnl += net_pnl
 
-                trades.append({
-                    "symbol": symbol,
-                    "entry_date": position[
-                        "entry_date"
-                    ],
-                    "exit_date": date,
-                    "entry_price": entry_price,
-                    "exit_price": exit_price,
-                    "shares": shares,
-                    "stop_price": stop_price,
-                    "pnl": net_pnl,
-                    "return_pct":
-                        net_pnl /
-                        entry_cost
-                        if entry_cost > 0
-                        else 0,
-                    "exit_reason":
-                        "STOP" if stop_hit
-                        else "TREND/MOMENTUM"
-                })
+                trades.append(
+                    {
+                        "symbol": symbol,
+                        "entry_date": position[
+                            "entry_date"
+                        ],
+                        "exit_date": date,
+                        "entry_price": entry_price,
+                        "exit_price": exit_price,
+                        "shares": shares,
+                        "stop_price": stop_price,
+                        "pnl": net_pnl,
+                        "return_pct": (
+                            net_pnl / entry_cost
+                            if entry_cost > 0
+                            else 0
+                        ),
+                        "exit_reason": (
+                            "STOP"
+                            if stop_hit
+                            else "TREND/MOMENTUM"
+                        )
+                    }
+                )
 
                 symbols_to_close.append(
                     symbol
                 )
 
         for symbol in symbols_to_close:
+
             del positions[symbol]
 
         # ====================================================
-        # 2. NEW ENTRIES
+        # FIND NEW ENTRIES
         # ====================================================
 
         if len(positions) < MAX_POSITIONS:
 
+            # ------------------------------------------------
+            # CURRENT PORTFOLIO VALUE
+            # ------------------------------------------------
+
             portfolio_value = cash
 
-            for symbol, position in positions.items():
+            for symbol, position in (
+                positions.items()
+            ):
 
                 df = data[symbol]
 
@@ -423,14 +476,22 @@ def run_backtest(data):
                         df.loc[date]["Close"]
                     )
 
-                    portfolio_value += (
-                        position["shares"] *
-                        close_price
-                    )
+                    if np.isfinite(close_price):
+
+                        portfolio_value += (
+                            position["shares"]
+                            * close_price
+                        )
+
+            # ------------------------------------------------
+            # INVESTED VALUE
+            # ------------------------------------------------
 
             invested_value = 0.0
 
-            for symbol, position in positions.items():
+            for symbol, position in (
+                positions.items()
+            ):
 
                 df = data[symbol]
 
@@ -440,10 +501,29 @@ def run_backtest(data):
                         df.loc[date]["Close"]
                     )
 
-                    invested_value += (
-                        position["shares"] *
-                        close_price
-                    )
+                    if np.isfinite(close_price):
+
+                        invested_value += (
+                            position["shares"]
+                            * close_price
+                        )
+
+            # ------------------------------------------------
+            # PORTFOLIO SAFETY CHECK
+            # ------------------------------------------------
+
+            if (
+                not np.isfinite(
+                    portfolio_value
+                )
+                or portfolio_value <= 0
+            ):
+
+                continue
+
+            # ------------------------------------------------
+            # CANDIDATES
+            # ------------------------------------------------
 
             candidates = []
 
@@ -457,18 +537,26 @@ def run_backtest(data):
 
                 idx = df.index.get_loc(date)
 
-                # Need previous trading day
                 if idx == 0:
                     continue
 
-                prev_row = df.iloc[idx - 1]
+                prev_row = df.iloc[
+                    idx - 1
+                ]
+
+                current_row = df.iloc[
+                    idx
+                ]
+
+                # --------------------------------------------
+                # PREVIOUS DAY SIGNAL
+                # --------------------------------------------
 
                 if not bool(
                     prev_row["SIGNAL"]
                 ):
-                    continue
 
-                current_row = df.iloc[idx]
+                    continue
 
                 open_price = float(
                     current_row["Open"]
@@ -478,53 +566,96 @@ def run_backtest(data):
                     prev_row["ATR14"]
                 )
 
-                if (
-                    not np.isfinite(atr) or
-                    atr <= 0
+                # --------------------------------------------
+                # CRITICAL NaN / INF CHECK
+                # --------------------------------------------
+
+                if not np.isfinite(
+                    open_price
                 ):
+
                     continue
 
+                if open_price <= 0:
+                    continue
+
+                if not np.isfinite(atr):
+                    continue
+
+                if atr <= 0:
+                    continue
+
+                # --------------------------------------------
+                # ENTRY / STOP
+                # --------------------------------------------
+
                 entry_price = (
-                    open_price *
-                    (1 + SLIPPAGE)
+                    open_price
+                    * (1 + SLIPPAGE)
                 )
 
                 stop_price = (
-                    entry_price -
-                    ATR_MULTIPLIER * atr
+                    entry_price
+                    - ATR_MULTIPLIER * atr
                 )
 
                 stop_distance = (
-                    entry_price -
-                    stop_price
+                    entry_price
+                    - stop_price
                 )
+
+                if not np.isfinite(
+                    entry_price
+                ):
+                    continue
+
+                if not np.isfinite(
+                    stop_price
+                ):
+                    continue
+
+                if not np.isfinite(
+                    stop_distance
+                ):
+                    continue
 
                 if stop_distance <= 0:
                     continue
 
-                candidates.append({
-                    "symbol": symbol,
-                    "entry_price": entry_price,
-                    "stop_price": stop_price,
-                    "stop_distance":
-                        stop_distance,
-                    "score":
-                        float(
+                candidates.append(
+                    {
+                        "symbol": symbol,
+                        "entry_price": entry_price,
+                        "stop_price": stop_price,
+                        "stop_distance": stop_distance,
+                        "score": float(
                             prev_row[
                                 "SIGNAL_SCORE"
                             ]
                         )
-                })
+                    }
+                )
 
-            # Stronger signals first.
+            # ------------------------------------------------
+            # HIGHEST SCORE FIRST
+            # ------------------------------------------------
+
             candidates.sort(
                 key=lambda x: x["score"],
                 reverse=True
             )
 
+            # =================================================
+            # OPEN POSITIONS
+            # =================================================
+
             for candidate in candidates:
 
-                if len(positions) >= MAX_POSITIONS:
+                if (
+                    len(positions)
+                    >= MAX_POSITIONS
+                ):
+
                     break
 
                 symbol = candidate[
@@ -543,69 +674,171 @@ def run_backtest(data):
                     "stop_distance"
                 ]
 
-                # 0.75% portfolio risk.
+                # --------------------------------------------
+                # FINAL SAFETY CHECK
+                # --------------------------------------------
+
+                if not all(
+                    np.isfinite(x)
+                    for x in [
+                        entry_price,
+                        stop_price,
+                        stop_distance,
+                        portfolio_value,
+                        cash,
+                        invested_value
+                    ]
+                ):
+
+                    continue
+
+                if (
+                    entry_price <= 0
+                    or stop_distance <= 0
+                    or portfolio_value <= 0
+                ):
+
+                    continue
+
+                # --------------------------------------------
+                # RISK AMOUNT
+                # --------------------------------------------
+
                 risk_amount = (
-                    portfolio_value *
-                    RISK_PER_TRADE
+                    portfolio_value
+                    * RISK_PER_TRADE
                 )
+
+                if not np.isfinite(
+                    risk_amount
+                ):
+
+                    continue
+
+                if risk_amount <= 0:
+                    continue
+
+                # --------------------------------------------
+                # POSITION SIZE BY RISK
+                # --------------------------------------------
 
                 shares_by_risk = (
-                    risk_amount /
-                    stop_distance
+                    risk_amount
+                    / stop_distance
                 )
 
+                # --------------------------------------------
+                # POSITION SIZE BY MAX POSITION
+                # --------------------------------------------
+
                 max_position_value = (
-                    portfolio_value *
-                    MAX_POSITION_PCT
+                    portfolio_value
+                    * MAX_POSITION_PCT
                 )
 
                 shares_by_cap = (
-                    max_position_value /
-                    entry_price
+                    max_position_value
+                    / entry_price
                 )
 
+                # --------------------------------------------
+                # POSITION SIZE BY CAPITAL
+                # --------------------------------------------
+
                 remaining_capital = (
-                    portfolio_value *
-                    MAX_INVESTED_PCT -
-                    invested_value
+                    portfolio_value
+                    * MAX_INVESTED_PCT
+                    - invested_value
                 )
 
                 shares_by_capital = (
                     max(
                         0,
                         remaining_capital
-                    ) /
-                    entry_price
+                    )
+                    / entry_price
                 )
 
+                # --------------------------------------------
+                # CRITICAL NaN / INF PROTECTION
+                # --------------------------------------------
+
+                position_size_values = [
+                    shares_by_risk,
+                    shares_by_cap,
+                    shares_by_capital
+                ]
+
+                if not all(
+                    np.isfinite(x)
+                    for x in position_size_values
+                ):
+
+                    continue
+
+                max_shares = min(
+                    position_size_values
+                )
+
+                if not np.isfinite(
+                    max_shares
+                ):
+
+                    continue
+
+                if max_shares <= 0:
+                    continue
+
+                # --------------------------------------------
+                # INTEGER SHARE COUNT
+                # --------------------------------------------
+
                 shares = math.floor(
-                    min(
-                        shares_by_risk,
-                        shares_by_cap,
-                        shares_by_capital
-                    )
+                    max_shares
                 )
 
                 if shares <= 0:
                     continue
 
+                # --------------------------------------------
+                # COST
+                # --------------------------------------------
+
                 cost = (
-                    shares *
-                    entry_price
+                    shares
+                    * entry_price
                 )
 
                 commission = (
-                    cost *
-                    COMMISSION
+                    cost
+                    * COMMISSION
                 )
 
                 total_cost = (
-                    cost +
-                    commission
+                    cost
+                    + commission
                 )
+
+                if not all(
+                    np.isfinite(x)
+                    for x in [
+                        cost,
+                        commission,
+                        total_cost
+                    ]
+                ):
+
+                    continue
+
+                if total_cost <= 0:
+                    continue
 
                 if total_cost > cash:
                     continue
+
+                # --------------------------------------------
+                # OPEN POSITION
+                # --------------------------------------------
 
                 cash -= total_cost
 
@@ -619,12 +852,14 @@ def run_backtest(data):
                 invested_value += cost
 
         # ====================================================
-        # 3. PORTFOLIO VALUE
+        # DAILY EQUITY
         # ====================================================
 
         equity = cash
 
-        for symbol, position in positions.items():
+        for symbol, position in (
+            positions.items()
+        ):
 
             df = data[symbol]
 
@@ -634,20 +869,32 @@ def run_backtest(data):
                     df.loc[date]["Close"]
                 )
 
-                equity += (
-                    position["shares"] *
+                if np.isfinite(
                     close_price
-                )
+                ):
 
-        equity_records.append({
-            "date": date,
-            "equity": equity,
-            "cash": cash,
-            "positions": len(positions)
-        })
+                    equity += (
+                        position["shares"]
+                        * close_price
+                    )
+
+        if not np.isfinite(equity):
+
+            equity = cash
+
+        equity_records.append(
+            {
+                "date": date,
+                "equity": equity,
+                "cash": cash,
+                "positions": len(
+                    positions
+                )
+            }
+        )
 
     # ========================================================
-    # CLOSE REMAINING POSITIONS
+    # FINAL CLOSE
     # ========================================================
 
     if all_dates:
@@ -667,9 +914,15 @@ def run_backtest(data):
                 df.loc[final_date]["Close"]
             )
 
+            if not np.isfinite(
+                final_close
+            ):
+
+                continue
+
             exit_price = (
-                final_close *
-                (1 - SLIPPAGE)
+                final_close
+                * (1 - SLIPPAGE)
             )
 
             shares = position[
@@ -677,66 +930,68 @@ def run_backtest(data):
             ]
 
             gross_value = (
-                shares *
-                exit_price
+                shares
+                * exit_price
             )
 
             commission = (
-                gross_value *
-                COMMISSION
+                gross_value
+                * COMMISSION
             )
 
             cash += (
-                gross_value -
-                commission
+                gross_value
+                - commission
             )
 
             gross_pnl = (
-                exit_price -
-                position["entry_price"]
+                exit_price
+                - position["entry_price"]
             ) * shares
 
             entry_cost = (
-                position["entry_price"] *
-                shares
+                position["entry_price"]
+                * shares
             )
 
             entry_commission = (
-                entry_cost *
-                COMMISSION
+                entry_cost
+                * COMMISSION
             )
 
             net_pnl = (
-                gross_pnl -
-                commission -
-                entry_commission
+                gross_pnl
+                - commission
+                - entry_commission
             )
 
-            trades.append({
-                "symbol": symbol,
-                "entry_date": position[
-                    "entry_date"
-                ],
-                "exit_date": final_date,
-                "entry_price": position[
-                    "entry_price"
-                ],
-                "exit_price": exit_price,
-                "shares": shares,
-                "stop_price": position[
-                    "stop_price"
-                ],
-                "pnl": net_pnl,
-                "return_pct":
-                    net_pnl /
-                    entry_cost
-                    if entry_cost > 0
-                    else 0,
-                "exit_reason": "FINAL_CLOSE"
-            })
+            trades.append(
+                {
+                    "symbol": symbol,
+                    "entry_date": position[
+                        "entry_date"
+                    ],
+                    "exit_date": final_date,
+                    "entry_price": position[
+                        "entry_price"
+                    ],
+                    "exit_price": exit_price,
+                    "shares": shares,
+                    "stop_price": position[
+                        "stop_price"
+                    ],
+                    "pnl": net_pnl,
+                    "return_pct": (
+                        net_pnl / entry_cost
+                        if entry_cost > 0
+                        else 0
+                    ),
+                    "exit_reason": "FINAL_CLOSE"
+                }
+            )
 
     # ========================================================
-    # RESULTS
+    # DATAFRAMES
     # ========================================================
 
     equity_df = pd.DataFrame(
@@ -748,16 +1003,21 @@ def run_backtest(data):
     )
 
     if equity_df.empty:
+
         raise RuntimeError(
             "Equity curve is empty."
         )
 
-    # Final capital.
+    # ========================================================
+    # PERFORMANCE METRICS
+    # ========================================================
+
     ending_capital = cash
 
     total_return = (
-        ending_capital /
-        START_CAPITAL - 1
+        ending_capital
+        / START_CAPITAL
+        - 1
     )
 
     days = max(
@@ -765,8 +1025,8 @@ def run_backtest(data):
         (
             pd.Timestamp(
                 all_dates[-1]
-            ) -
-            pd.Timestamp(
+            )
+            - pd.Timestamp(
                 all_dates[0]
             )
         ).days
@@ -774,64 +1034,101 @@ def run_backtest(data):
 
     years = days / 365.25
 
-    cagr = (
-        (ending_capital /
-         START_CAPITAL)
-        ** (1 / years) - 1
-        if years > 0
-        else 0
-    )
+    if (
+        years > 0
+        and ending_capital > 0
+    ):
+
+        cagr = (
+            (
+                ending_capital
+                / START_CAPITAL
+            )
+            ** (1 / years)
+            - 1
+        )
+
+    else:
+
+        cagr = 0
+
+    # ========================================================
+    # EQUITY METRICS
+    # ========================================================
 
     equity_df[
         "daily_return"
-    ] = equity_df[
-        "equity"
-    ].pct_change().fillna(0)
-
-    equity_df[
-        "peak"
-    ] = equity_df[
-        "equity"
-    ].cummax()
-
-    equity_df[
-        "drawdown"
     ] = (
-        equity_df["equity"] /
-        equity_df["peak"] - 1
+        equity_df["equity"]
+        .pct_change()
+        .fillna(0)
     )
 
-    max_drawdown = equity_df[
-        "drawdown"
-    ].min()
+    equity_df["peak"] = (
+        equity_df["equity"]
+        .cummax()
+    )
 
-    daily_returns = equity_df[
-        "daily_return"
-    ]
+    equity_df["drawdown"] = (
+        equity_df["equity"]
+        / equity_df["peak"]
+        - 1
+    )
 
-    if daily_returns.std() > 0:
+    max_drawdown = (
+        equity_df["drawdown"]
+        .min()
+    )
+
+    daily_returns = (
+        equity_df["daily_return"]
+    )
+
+    # ========================================================
+    # SHARPE
+    # ========================================================
+
+    if (
+        len(daily_returns) > 1
+        and daily_returns.std() > 0
+    ):
 
         sharpe = (
-            daily_returns.mean() /
-            daily_returns.std()
+            daily_returns.mean()
+            / daily_returns.std()
         ) * np.sqrt(252)
 
     else:
+
         sharpe = 0
 
-    downside = daily_returns[
-        daily_returns < 0
-    ]
+    # ========================================================
+    # SORTINO
+    # ========================================================
 
-    if len(downside) > 0 and downside.std() > 0:
+    downside = (
+        daily_returns[
+            daily_returns < 0
+        ]
+    )
+
+    if (
+        len(downside) > 1
+        and downside.std() > 0
+    ):
 
         sortino = (
-            daily_returns.mean() /
-            downside.std()
+            daily_returns.mean()
+            / downside.std()
         ) * np.sqrt(252)
 
     else:
+
         sortino = 0
+
+    # ========================================================
+    # TRADE METRICS
+    # ========================================================
 
     if not trades_df.empty:
 
@@ -844,8 +1141,8 @@ def run_backtest(data):
         ]
 
         win_rate = (
-            len(wins) /
-            len(trades_df)
+            len(wins)
+            / len(trades_df)
         )
 
         gross_profit = (
@@ -854,16 +1151,24 @@ def run_backtest(data):
             else 0
         )
 
-        gross_loss = abs(
-            losses["pnl"].sum()
-        ) if not losses.empty else 0
-
-        profit_factor = (
-            gross_profit /
-            gross_loss
-            if gross_loss > 0
-            else np.inf
+        gross_loss = (
+            abs(
+                losses["pnl"].sum()
+            )
+            if not losses.empty
+            else 0
         )
+
+        if gross_loss > 0:
+
+            profit_factor = (
+                gross_profit
+                / gross_loss
+            )
+
+        else:
+
+            profit_factor = np.inf
 
         expectancy = (
             trades_df["pnl"].mean()
@@ -889,46 +1194,60 @@ def run_backtest(data):
         avg_win = 0
         avg_loss = 0
 
+    # ========================================================
+    # DAILY METRICS
+    # ========================================================
+
     average_daily_pnl = (
-        equity_df["equity"].diff().mean()
+        equity_df["equity"]
+        .diff()
+        .mean()
     )
 
     average_daily_return = (
-        equity_df["daily_return"].mean()
+        equity_df["daily_return"]
+        .mean()
     )
 
-    summary = pd.DataFrame([{
-        "start_capital": START_CAPITAL,
-        "ending_capital": ending_capital,
-        "total_return": total_return,
-        "CAGR": cagr,
-        "max_drawdown": max_drawdown,
-        "Sharpe": sharpe,
-        "Sortino": sortino,
-        "win_rate": win_rate,
-        "profit_factor": profit_factor,
-        "expectancy_TL": expectancy,
-        "average_win_TL": avg_win,
-        "average_loss_TL": avg_loss,
-        "average_daily_pnl_TL":
-            average_daily_pnl,
-        "average_daily_return":
-            average_daily_return,
-        "trade_count":
-            len(trades_df),
-        "data_start":
-            str(all_dates[0]),
-        "data_end":
-            str(all_dates[-1]),
-        "symbols_requested":
-            len(SYMBOLS),
-        "symbols_downloaded":
-            len(data),
-        "commission":
-            COMMISSION,
-        "slippage":
-            SLIPPAGE
-    }])
+    # ========================================================
+    # SUMMARY
+    # ========================================================
+
+    summary = pd.DataFrame(
+        [
+            {
+                "start_capital": START_CAPITAL,
+                "ending_capital": ending_capital,
+                "total_return": total_return,
+                "CAGR": cagr,
+                "max_drawdown": max_drawdown,
+                "Sharpe": sharpe,
+                "Sortino": sortino,
+                "win_rate": win_rate,
+                "profit_factor": profit_factor,
+                "expectancy_TL": expectancy,
+                "average_win_TL": avg_win,
+                "average_loss_TL": avg_loss,
+                "average_daily_pnl_TL": average_daily_pnl,
+                "average_daily_return": average_daily_return,
+                "trade_count": len(trades_df),
+                "data_start": str(
+                    all_dates[0]
+                ),
+                "data_end": str(
+                    all_dates[-1]
+                ),
+                "symbols_requested": len(
+                    SYMBOLS
+                ),
+                "symbols_downloaded": len(
+                    data
+                ),
+                "commission": COMMISSION,
+                "slippage": SLIPPAGE
+            }
+        ]
+    )
 
     return (
         equity_df,
@@ -951,13 +1270,20 @@ def main():
     data = download_data()
 
     if not data:
+
         raise RuntimeError(
             "No symbols were downloaded."
         )
 
-    equity_df, trades_df, summary = (
-        run_backtest(data)
-    )
+    (
+        equity_df,
+        trades_df,
+        summary
+    ) = run_backtest(data)
+
+    # ========================================================
+    # SAVE RESULTS
+    # ========================================================
 
     equity_df.to_csv(
         "results/equity_curve.csv",
@@ -976,7 +1302,12 @@ def main():
 
     result = summary.iloc[0]
 
+    # ========================================================
+    # PRINT RESULTS
+    # ========================================================
+
     print()
+
     print("=" * 70)
     print("BIST BACKTEST RESULTS")
     print("=" * 70)
